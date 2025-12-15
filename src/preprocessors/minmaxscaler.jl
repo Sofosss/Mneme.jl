@@ -6,30 +6,22 @@ using CondaPkg; CondaPkg.add("scikit-learn")
 using PythonCall
 
 sklearn = pyimport("sklearn.preprocessing")
+np = pyimport("numpy") 
 
-using DataFrames
-using CSV
+using DataFrames, CSV
 
 import ..torcjulia
 
 mutable struct MinMaxScaler
-    params::NamedTuple{(:feature_range, :copy, :clip), Tuple{Tuple{Float64,Float64}, Bool, Bool}}
     scaler::Py
     file::String
     features::Vector{Symbol}
     feature_idxs::Vector{Int}
 end
 
-struct MinMaxStats
-    data_min::Vector{Float64}
-    data_max::Vector{Float64}
-    n_samples::Int
-end
-
 MinMaxScaler(file::String, features::Vector{Symbol}; feature_range = (0.0, 1.0), copy = true, 
             clip = false) =
     MinMaxScaler(
-        (feature_range = feature_range, copy = copy, clip = clip),
         sklearn.MinMaxScaler(feature_range = feature_range, copy = copy, clip = clip),
         file,
         features,
@@ -37,45 +29,45 @@ MinMaxScaler(file::String, features::Vector{Symbol}; feature_range = (0.0, 1.0),
     )
 
 function fit(scaler::MinMaxScaler, reader::BlockReader)
-    block_size, offsets, columns = reader.block_size, reader.block_offsets, reader.columns
+    block_size, offsets = reader.block_size, reader.block_offsets
     scaler.feature_idxs = _map_features(scaler.features, reader.feature_idxs_map)
     
-    file = scaler.file; features = scaler.features; kwargs = NamedTuple(scaler.params)
-    args = (file, block_size, columns, features, scaler.feature_idxs)
+    file = scaler.file; features = scaler.features
+    args = (file, block_size, scaler.feature_idxs)
     
-    _partial_res = torcjulia.torc_map(
+    _partial_res = torcjulia.map(
         _partial_fit,
         offsets;
         chunksize = 1,
-        args = args,
-        kwargs...
+        args = args
     )
 
-    f_stats = reduce(_partial_res)
-
-    scaler.scaler.data_min_ = f_stats.data_min
-    scaler.scaler.data_max_ = f_stats.data_max
-    scaler.scaler.n_samples_seen_ = f_stats.n_samples
-
-    frange = scaler.scaler.feature_range
-    scaler.scaler.data_range_ = f_stats.data_max .- f_stats.data_min
-    scaler.scaler.scale_ = (frange[1] - frange[0]) ./ (f_stats.data_max .- f_stats.data_min)
-    scaler.scaler.min_ = frange[1] .- f_stats.data_min .* (frange[1] - frange[0]) ./ (f_stats.data_max .- f_stats.data_min)
-    scaler.scaler.n_features_in_ = length(scaler.features)
-    scaler.scaler.feature_names_in_ = features[sortperm(scaler.feature_idxs)]
-
+    _set_attributes(scaler.scaler, _reduce(_partial_res), features, scaler.feature_idxs)
 end
 
-function _partial_fit(offset, file, block_size, columns, features, feat_mapping; kwargs...)
+function _set_attributes(scaler::Py, stats::Tuple{Py, Py, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
+    scaler.data_min_ = stats[1]; scaler.data_max_ = stats[2]; scaler.n_samples_seen_ = stats[3]
+
+    range = scaler.feature_range; data_range = stats[2] .- stats[1]; scale = (range[1] - range[0]) ./ data_range
+    
+    scaler.data_range_ = data_range
+    scaler.scale_ = scale
+    scaler.min_ = range[0] .- stats[1] .* scale
+    scaler.n_features_in_ = length(stats[1])
+    scaler.feature_names_in_ = features[sortperm(feature_idxs)]
+end
+
+function _partial_fit(offset::Int, file::String, block_size::Int,
+                      feat_mapping::Vector{Int})::Tuple{Vector{Float64}, Vector{Float64}, Int}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
-    n_samples = size(X, 1)
-    data_min = minimum(X, dims = 1)[:]
-    data_max = maximum(X, dims = 1)[:]   
+    n_samples = nrow(X)
+    data_min = minimum.(eachcol(X))
+    data_max = maximum.(eachcol(X))   
 
-    MinMaxStats(data_min, data_max, n_samples)
+    data_min, data_max, n_samples
 end
 
-function _fetch_chunk(offset, file, block_size, feat_mapping)
+function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
         seek(io, offset)
 
@@ -86,33 +78,40 @@ function _fetch_chunk(offset, file, block_size, feat_mapping)
             select = feat_mapping
         )
 
-        data = DataFrame(csvfile)
-        Matrix(Float64.(data))
+        DataFrame(csvfile)
     end
 end
 
-function reduce(stats::Vector{MinMaxStats})
-    reduce_minmax_scalers(stats)
-end
+function _reduce(stats::Vector{Tuple{Vector{Float64}, Vector{Float64}, Int}})::Tuple{Py, Py, Int}
+    mins = stats[1][1]; maxs = stats[1][2]; total_samples = stats[1][3]
 
-function reduce_minmax_scalers(stats::Vector{MinMaxStats})::MinMaxStats
-    _stats = popfirst!(copy(stats)) 
-    _min = _stats.data_min
-    _max = _stats.data_max
-    total_samples = _stats.n_samples
-
-    for s in stats
-        _min = min.(_min, s.data_min)
-        _max = max.(_max, s.data_max)
-        total_samples += s.n_samples
+    @inbounds for i in 2:length(stats)
+        s = stats[i]
+        @. mins = min(mins, s[1])
+        @. maxs = max(maxs, s[2])
+        total_samples += s[3]
     end
 
-    MinMaxStats(_min, _max, total_samples)
+    np.array(mins), np.array(maxs), total_samples
+end
+
+function transform(scaler::MinMaxScaler, X) 
+    warnings = pyimport("warnings")
+    warnings.filterwarnings("ignore", message = "X does not have valid feature names")
+
+    scaler.scaler.transform(np.array(X))
+end
+
+function print_stats(scaler::MinMaxScaler)
+    println("min_: $(scaler.scaler.min_)\nscale_: $(scaler.scaler.scale_)\
+            \ndata_min_: $(scaler.scaler.data_min_)\ndata_max_: $(scaler.scaler.data_max_)\ndata_range_: $(scaler.scaler.data_range_)\
+            \nn_features_in_: $(scaler.scaler.n_features_in_)\nn_samples_seen_: $(scaler.scaler.n_samples_seen_)\
+            \nfeature_names_in_: $(scaler.scaler.feature_names_in_)")
+
 end
 
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
-get_scaler(scaler::MinMaxScaler) = scaler.scaler
+get_scaler(scaler::MinMaxScaler)::Py = scaler.scaler
 
-end
-                                                                                                          
+end                                                                      
