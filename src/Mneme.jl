@@ -5,17 +5,20 @@ import ..torcjulia
 include("offsets.jl")
 include("./preprocessors/minmaxscaler.jl")
 include("./preprocessors/maxabsscaler.jl")
+include("./preprocessors/standardscaler.jl")
 
-export BlockReader, MinMaxScaler, MaxAbsScaler, fit, transform, print_stats
+export BlockReader, MinMaxScaler, MaxAbsScaler, StandardScaler, fit, transform, print_stats
 
 using .offsets
 using .minmaxscaler
 using .maxabsscaler
+using .standardscaler
 
 const BlockReader = offsets.BlockReader
 
 const MinMaxScaler = minmaxscaler.MinMaxScaler
 const MaxAbsScaler = maxabsscaler.MaxAbsScaler
+const StandardScaler = standardscaler.StandardScaler
 
 fit(s::MinMaxScaler, reader) = minmaxscaler.fit(s, reader)
 transform(s::MinMaxScaler, X) = minmaxscaler.transform(s, X)
@@ -24,6 +27,10 @@ print_stats(s::MinMaxScaler) = minmaxscaler.print_stats(s)
 fit(s::MaxAbsScaler, reader) = maxabsscaler.fit(s, reader)
 transform(s::MaxAbsScaler, X) = maxabsscaler.transform(s, X)
 print_stats(s::MaxAbsScaler) = maxabsscaler.print_stats(s)
+
+fit(s::StandardScaler, reader) = standardscaler.fit(s, reader)
+transform(s::StandardScaler, X) = standardscaler.transform(s, X)
+print_stats(s::StandardScaler) = standardscaler.print_stats(s)
 
 function init(func::Function)
     torcjulia.start(func)       
