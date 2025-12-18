@@ -33,7 +33,7 @@ OrdinalEncoder(
     dtype::Union{Type, Nothing} = Float64,
     handle_unknown::String = "error",
     unknown_value::Union{Int, Nothing} = nothing, 
-    encoded_missing_value::Union{Int, Nothing} = nothing
+    encoded_missing_value::Union{Int, String, Nothing} = nothing
 ) =
     begin
         py_dtype = _py_dtype(dtype) 
@@ -78,7 +78,7 @@ function fit(encoder::OrdinalEncoder, reader::BlockReader)
     _set_attributes(encoder.encoder, _reduce(_partial_res), features, encoder.feature_idxs)
 end
 
-function _set_attributes(encoder::Py, stats::Tuple{Py, Dict{Int, Int}}, features::Vector{Symbol}, feature_idxs::Vector{Int})
+function _set_attributes(encoder::Py, stats::Tuple{Vector{Py}, Dict{Int, Int}}, features::Vector{Symbol}, feature_idxs::Vector{Int})
     encoder.categories_ = stats[1]
     encoder.n_features_in_ = length(features)
     encoder.feature_names_in_ = features[sortperm(feature_idxs)]
@@ -92,17 +92,17 @@ function set_missing_indices(categories::Vector{<:Vector})
     missing_indices = Dict{Int, Int}()
 
     for (feature_idx, categories_for_idx) in enumerate(categories)
-        missing_indices[feature_idx - 1] = length(categories_for_idx)
+        missing_indices[feature_idx - 1] = length(categories_for_idx) - 1
     end
 
     missing_indices
 end
 
 function _partial_fit(offset::Int, file::String, block_size::Int, 
-                      feat_mapping::Vector{Int})::Vector{Union{Vector{Number}, Vector{<:AbstractString}}}
+                      feat_mapping::Vector{Int})::Vector{Vector{Union{Missing, Any}}}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     classes = [unique(col) for col in eachcol(X)]
-
+    
     classes
 end
 
@@ -121,7 +121,7 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
     end
 end
 
-function _reduce(stats::Vector{Vector{Union{Vector{Number}, Vector{<:AbstractString}}}})::Tuple{Py, Dict{Int, Int}}
+function _reduce(stats::Vector{Vector{Vector{Union{Missing, Any}}}})::Tuple{Vector{Py}, Dict{Int, Int}}
     cats = stats[1]
 
     @inbounds for i in 2:length(stats)
@@ -135,7 +135,7 @@ function _reduce(stats::Vector{Vector{Union{Vector{Number}, Vector{<:AbstractStr
 
     missing_indices = set_missing_indices(cats)
 
-    np.array(cats), missing_indices
+    [np.array(cat_feat) for cat_feat in cats], missing_indices
 end
 
 function transform(encoder::OrdinalEncoder, X) 
@@ -149,7 +149,6 @@ function print_stats(encoder::OrdinalEncoder)
     println("categories_: $(encoder.encoder.categories_)\
       \nn_features_in_: $(encoder.encoder.n_features_in_)\
       \nfeature_names_in_: $(encoder.encoder.feature_names_in_)")
-
 end
 
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
