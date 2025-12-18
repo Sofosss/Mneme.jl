@@ -40,7 +40,7 @@ OrdinalEncoder(
         OrdinalEncoder(
             categories,
             sklearn.OrdinalEncoder(
-                categories = categories,
+                categories = [np.array(cat_feat) for cat_feat in categories],
                 dtype = py_dtype,
                 handle_unknown = handle_unknown,
                 unknown_value = unknown_value,

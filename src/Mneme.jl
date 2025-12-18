@@ -9,8 +9,9 @@ include("./preprocessors/scalers/maxabsscaler.jl")
 include("./preprocessors/scalers/standardscaler.jl")
 
 include("./preprocessors/encoders/ordinalencoder.jl")
+include("./preprocessors/encoders/labelencoder.jl")
 
-export BlockReader, MinMaxScaler, MaxAbsScaler, StandardScaler, OrdinalEncoder, fit, transform, print_stats
+export BlockReader, MinMaxScaler, MaxAbsScaler, StandardScaler, OrdinalEncoder, LabelEncoder, fit, transform, print_stats
 
 using .offsets
 
@@ -19,6 +20,7 @@ using .maxabsscaler
 using .standardscaler
 
 using .ordinalencoder
+using .labelencoder
 
 const BlockReader = offsets.BlockReader
 
@@ -27,6 +29,8 @@ const MaxAbsScaler = maxabsscaler.MaxAbsScaler
 const StandardScaler = standardscaler.StandardScaler
 
 const OrdinalEncoder = ordinalencoder.OrdinalEncoder
+const LabelEncoder = labelencoder.LabelEncoder
+
 
 fit(s::MinMaxScaler, reader) = minmaxscaler.fit(s, reader)
 transform(s::MinMaxScaler, X) = minmaxscaler.transform(s, X)
@@ -43,6 +47,10 @@ print_stats(s::StandardScaler) = standardscaler.print_stats(s)
 fit(e::OrdinalEncoder, reader) = ordinalencoder.fit(e, reader)
 transform(e::OrdinalEncoder, X) = ordinalencoder.transform(e, X)
 print_stats(e::OrdinalEncoder) = ordinalencoder.print_stats(e)
+
+fit(e::LabelEncoder, reader) = labelencoder.fit(e, reader)
+transform(e::LabelEncoder, X) = labelencoder.transform(e, X)
+print_stats(e::LabelEncoder) = labelencoder.print_stats(e)
 
 function init(func::Function)
     torcjulia.start(func)       
