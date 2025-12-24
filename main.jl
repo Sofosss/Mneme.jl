@@ -8,7 +8,7 @@ using PythonCall
 
 np = pyimport("numpy")
 
-using CSV, Tables
+using CSV, Tables, SparseArrays
 
 function fetch_data(file::String, features::Vector{Symbol})
     tbl = CSV.File(file; select = features)
@@ -21,7 +21,7 @@ function main()
     path = "./data/data.csv"; num_blocks = 5
     reader = Mneme.BlockReader(path; num_blocks = num_blocks, target = [:Gender])
 
-    data = fetch_data(path, [:Name, :Score, :Age])
+    data = fetch_data(path, [:Name, :Score, :Age, :Gender])
 
     # minmax_scaler = Mneme.MinMaxScaler(path, [:Score, :Age])
     # Mneme.fit(minmax_scaler, reader)
@@ -59,15 +59,46 @@ function main()
     # ord_data = pyconvert(Array{Int}, ord_data_np)
     # println(ord_data[1:10, :])
 
-    label_encoder = Mneme.LabelEncoder(path, :Name)
-    Mneme.fit(label_encoder, reader)
+    # label_encoder = Mneme.LabelEncoder(path, :Name)
+    # Mneme.fit(label_encoder, reader)
+    # Mneme.print_stats(label_encoder)
 
-    Mneme.print_stats(label_encoder)
+    # label_data_np = Mneme.transform(label_encoder, data[:, 1:1])
+    # label_data = pyconvert(Array{Int}, label_data_np)
+    # println(label_data[1:10, :])
 
-    label_data_np = Mneme.transform(label_encoder, data[:, 1:1])
-    label_data = pyconvert(Array{Int}, label_data_np)
-    println(label_data[1:10, :])
+    
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; sparse_output = true)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; handle_unknown = "ignore", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; handle_unknown = "ignore", sparse_output = true)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; handle_unknown = "error",  sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; drop = nothing, sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; drop = "first", sparse_output = false)
+    #onehot_encoder  = Mneme.OneHotEncoder(path, [:Gender]; drop = "if_binary", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; drop = "first", handle_unknown = "ignore", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; drop = "if_binary", handle_unknown = "ignore", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; dtype = Float32, sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; dtype = Int32,   sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender, :Name]; handle_unknown = "ignore", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender, :Name]; drop = "first", sparse_output = false)
+    #onehot_encoder = Mneme.OneHotEncoder(path, [:Gender]; categories = [["Female","Male"]])
 
+    Mneme.fit(onehot_encoder, reader)
+    Mneme.print_stats(onehot_encoder)
+
+    oh = Mneme.transform(onehot_encoder, data[:, 4:4])
+    #oh = Mneme.transform(onehot_encoder, data[:, [4, 1]])
+    if oh isa SparseMatrixCSC
+        oh_data = oh
+    else
+        oh_data = pyconvert(Matrix{Float64}, oh)
+    end
+
+    # Print dimensions and first 10 rows with ALL columns
+    println("Shape: ", size(oh_data))
+    println("First 10 rows (all columns):")
+    println(oh_data[1:10, :])
 
 
 end
