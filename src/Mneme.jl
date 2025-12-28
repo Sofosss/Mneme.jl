@@ -12,7 +12,7 @@ include("./preprocessors/encoders/ordinalencoder.jl")
 include("./preprocessors/encoders/labelencoder.jl")
 include("./preprocessors/encoders/onehotencoder.jl")
 
-export BlockReader, MinMaxScaler, MaxAbsScaler, StandardScaler, OrdinalEncoder, LabelEncoder, OneHotEncoder, fit, transform, print_stats
+export BlockReader, MinMaxScaler, MaxAbsScaler, StandardScaler, OrdinalEncoder, LabelEncoder, OneHotEncoder, fit, transform, print_stats, to_JuliaCSR
 
 using .offsets
 
@@ -34,6 +34,7 @@ const OrdinalEncoder = ordinalencoder.OrdinalEncoder
 const LabelEncoder = labelencoder.LabelEncoder
 const OneHotEncoder = onehotencoder.OneHotEncoder
 
+using PythonCall
 
 fit(s::MinMaxScaler, reader) = minmaxscaler.fit(s, reader)
 transform(s::MinMaxScaler, X) = minmaxscaler.transform(s, X)
@@ -58,6 +59,7 @@ print_stats(e::LabelEncoder) = labelencoder.print_stats(e)
 fit(e::OneHotEncoder, reader) = onehotencoder.fit(e, reader)
 transform(e::OneHotEncoder, X) = onehotencoder.transform(e, X)
 print_stats(e::OneHotEncoder) = onehotencoder.print_stats(e)
+to_JuliaCSR(Y::Py) = onehotencoder.to_JuliaCSR(Y)
 
 function init(func::Function)
     torcjulia.start(func)       
