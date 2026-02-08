@@ -1,6 +1,3 @@
-module labelencoder
-
-import ..offsets: BlockReader
 
 using CondaPkg; CondaPkg.add("scikit-learn")
 using PythonCall
@@ -17,6 +14,7 @@ mutable struct LabelEncoder
     file::String
     features::Symbol
     feature_idxs::Vector{Int}
+
 end
 
 LabelEncoder(
@@ -41,26 +39,28 @@ function fit(encoder::LabelEncoder, reader::BlockReader)
     args = (file, block_size, encoder.feature_idxs)
     
     _partial_res = torcjulia.map(
-        _partial_fit,
+        _partial_fit_le,
         offsets;
         chunksize = 1,
         args = args
     )
     
-    _set_attributes(encoder.encoder, _reduce(_partial_res))
+    _set_attributes_le(encoder.encoder, _reduce_le(_partial_res))
+
 end
 
-function _set_attributes(encoder::Py, classes::Py)
+function _set_attributes_le(encoder::Py, classes::Py)
     encoder.classes_ = classes
 
 end
 
-function _partial_fit(offset::Int, file::String, block_size::Int, 
+function _partial_fit_le(offset::Int, file::String, block_size::Int, 
                       feat_mapping::Vector{Int})::Vector{Union{Missing, Any}}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     classes = unique(X[:, 1])
     
     classes
+
 end
 
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
@@ -76,9 +76,10 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
 
         DataFrame(csvfile)
     end
+
 end
 
-function _reduce(stats::Vector{Vector{Union{Missing, Any}}})::Py
+function _reduce_le(stats)::Py
     classes = stats[1]
 
     @inbounds for i in 2:length(stats)
@@ -88,6 +89,7 @@ function _reduce(stats::Vector{Vector{Union{Missing, Any}}})::Py
     end
 
     np.array(classes)
+
 end
 
 function transform(encoder::LabelEncoder, X) 
@@ -95,14 +97,14 @@ function transform(encoder::LabelEncoder, X)
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
     encoder.encoder.transform(np.asarray(X).ravel())
+
 end
 
 function print_stats(encoder::LabelEncoder)
     println("classes_: $(encoder.encoder.classes_)")
+    
 end
 
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_encoder(encoder::LabelEncoder)::Py = encoder.encoder
-
-end 

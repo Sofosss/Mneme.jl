@@ -1,6 +1,4 @@
-module onehotencoder
 
-import ..offsets: BlockReader
 import ..torcjulia
 
 using CondaPkg; CondaPkg.add("scikit-learn")
@@ -18,6 +16,7 @@ mutable struct OneHotEncoder
     file::String
     features::Vector{Symbol}
     feature_idxs::Vector{Int}
+    
 end
 
 _py_dtype(::Type{Float64}) = np.float64
@@ -73,16 +72,17 @@ function fit(encoder::OneHotEncoder, reader::BlockReader)
     args = (file, block_size, encoder.feature_idxs)
     
     _partial_res = torcjulia.map(
-        _partial_fit,
+        _partial_fit_ohe,
         offsets;
         chunksize = 1,
         args = args
     )
 
-    _set_attributes(encoder.encoder, _reduce(_partial_res), features)
+    _set_attributes_ohe(encoder.encoder, _reduce_ohe(_partial_res), features)
+
 end
 
-function _set_attributes(encoder::Py, stats::Tuple{Py, Dict{Int, Int}}, features::Vector{Symbol})
+function _set_attributes_ohe(encoder::Py, stats::Tuple{Py, Dict{Int, Int}}, features::Vector{Symbol})
     encoder.categories_ = stats[1]
     encoder.n_features_in_ = length(features)
     encoder.feature_names_in_ = features
@@ -91,6 +91,7 @@ function _set_attributes(encoder::Py, stats::Tuple{Py, Dict{Int, Int}}, features
     encoder._infrequent_enabled = false
     
     _set_internal_onehot_state!(encoder)
+
 end
 
 function set_missing_indices(categories::Vector{<:Vector})
@@ -103,14 +104,16 @@ function set_missing_indices(categories::Vector{<:Vector})
     end
 
     missing_indices
+
 end
 
-function _partial_fit(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::Vector{Vector{Union{Missing, Any}}}
+function _partial_fit_ohe(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::Vector{Vector{Union{Missing, Any}}}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     reorder_perm = sortperm(sortperm(feat_mapping))     # keep sorted, because if we have > 1 feature, they must be in order
     classes = [unique(X[:, i]) for i in reorder_perm]
     
     classes
+
 end
 
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
@@ -126,9 +129,10 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
 
         DataFrame(csvfile)
     end
+
 end
 
-function _reduce(stats::Vector{Vector{Vector{Union{Missing, Any}}}})::Tuple{Py, Dict{Int, Int}}
+function _reduce_ohe(stats)::Tuple{Py, Dict{Int, Int}}
     cats = stats[1]
 
     @inbounds for i in 2:length(stats)
@@ -150,10 +154,12 @@ function transform(encoder::OneHotEncoder, X)
 
     # if sparse output is true, Y is always a scipy.sparse._csr.csr_matrix (line 1080 -> /preprocessing/_encoders.py)
     encoder.encoder.transform(np.array(X))
+
 end
 
 function _get_cat_idx(drop_cat::Py, categories::Py)::Int
     pyconvert(Int, np.where(categories .== drop_cat)[0][0])
+
 end
 
 function _set_internal_onehot_state!(encoder::Py)
@@ -179,6 +185,7 @@ function _set_internal_onehot_state!(encoder::Py)
     
     else
         encoder.drop_idx_ = py_none
+
     end
 
     encoder._drop_idx_after_grouping = encoder.drop_idx_
@@ -186,6 +193,7 @@ function _set_internal_onehot_state!(encoder::Py)
     encoder._infrequent_indices = pydict()
 
     encoder._n_features_outs = pylist([length(cat) - (drop_idx[i] !== nothing ? 1 : 0) for (i, cat) in enumerate(encoder.categories_)])
+    
 end
 
 # function _set_internal_onehot_state!(encoder::Py)
@@ -273,6 +281,7 @@ function to_JuliaCSR(X::Py)
     m, n   = pyconvert(Tuple{Int, Int}, X.shape)
 
     sparsecsr(indptr[1:end-1], indices, data, m, n)
+    
 end
 
 function print_stats(encoder::OneHotEncoder)
@@ -280,10 +289,9 @@ function print_stats(encoder::OneHotEncoder)
     println("n_features_in_: $(encoder.encoder.n_features_in_)")
     println("feature_names_in_: $(encoder.encoder.feature_names_in_)")
     println("drop_idx_: $(encoder.encoder.drop_idx_)")
+
 end
 
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_encoder(encoder::OneHotEncoder)::Py = encoder.encoder
-
-end

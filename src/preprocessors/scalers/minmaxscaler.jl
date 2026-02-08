@@ -1,7 +1,3 @@
-module minmaxscaler
-
-import ..offsets: BlockReader
-
 using CondaPkg; CondaPkg.add("scikit-learn")
 using PythonCall
 
@@ -17,6 +13,7 @@ mutable struct MinMaxScaler
     file::String
     features::Vector{Symbol}
     feature_idxs::Vector{Int}
+
 end
 
 MinMaxScaler(file::String, features::Vector{Symbol}; feature_range = (0.0, 1.0), copy = true, 
@@ -36,16 +33,17 @@ function fit(scaler::MinMaxScaler, reader::BlockReader)
     args = (file, block_size, scaler.feature_idxs)
     
     _partial_res = torcjulia.map(
-        _partial_fit,
+        _partial_fit_mm,
         offsets;
         chunksize = 1,
         args = args
     )
 
-    _set_attributes(scaler.scaler, _reduce(_partial_res), features, scaler.feature_idxs)
+    _set_attributes_mm(scaler.scaler, _reduce_mm(_partial_res), features, scaler.feature_idxs)
+
 end
 
-function _set_attributes(scaler::Py, stats::Tuple{Py, Py, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
+function _set_attributes_mm(scaler::Py, stats::Tuple{Py, Py, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
     scaler.data_min_ = stats[1]; scaler.data_max_ = stats[2]; scaler.n_samples_seen_ = stats[3]
 
     range = scaler.feature_range; data_range = stats[2] .- stats[1]; scale = (range[1] - range[0]) ./ data_range
@@ -55,9 +53,10 @@ function _set_attributes(scaler::Py, stats::Tuple{Py, Py, Int}, features::Vector
     scaler.min_ = range[0] .- stats[1] .* scale
     scaler.n_features_in_ = length(stats[1])
     scaler.feature_names_in_ = features[sortperm(feature_idxs)]
+
 end
 
-function _partial_fit(offset::Int, file::String, block_size::Int,
+function _partial_fit_mm(offset::Int, file::String, block_size::Int,
                       feat_mapping::Vector{Int})::Tuple{Vector{Float64}, Vector{Float64}, Int}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     n_samples = nrow(X)
@@ -65,6 +64,7 @@ function _partial_fit(offset::Int, file::String, block_size::Int,
     data_max = maximum.(eachcol(X))   
 
     data_min, data_max, n_samples
+
 end
 
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
@@ -77,12 +77,14 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
             limit = block_size,
             select = feat_mapping
         )
-
+        
+        println(DataFrame(csvfile))
         DataFrame(csvfile)
     end
+
 end
 
-function _reduce(stats::Vector{Tuple{Vector{Float64}, Vector{Float64}, Int}})::Tuple{Py, Py, Int}
+function _reduce_mm(stats::AbstractVector{<:Tuple{AbstractVector{<:Number}, AbstractVector{<:Number}, Int}})::Tuple{Py, Py, Int}
     mins = stats[1][1]; maxs = stats[1][2]; total_samples = stats[1][3]
 
     @inbounds for i in 2:length(stats)
@@ -91,8 +93,9 @@ function _reduce(stats::Vector{Tuple{Vector{Float64}, Vector{Float64}, Int}})::T
         @. maxs = max(maxs, s[2])
         total_samples += s[3]
     end
-
+    
     np.array(mins), np.array(maxs), total_samples
+    
 end
 
 function transform(scaler::MinMaxScaler, X) 
@@ -100,6 +103,7 @@ function transform(scaler::MinMaxScaler, X)
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
     scaler.scaler.transform(np.array(X))
+    
 end
 
 function print_stats(scaler::MinMaxScaler)
@@ -113,5 +117,4 @@ end
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_scaler(scaler::MinMaxScaler)::Py = scaler.scaler
-
-end                                                                      
+                                                                 

@@ -1,7 +1,3 @@
-module maxabsscaler
-
-import ..offsets: BlockReader
-
 using CondaPkg; CondaPkg.add("scikit-learn")
 using PythonCall
 
@@ -17,6 +13,7 @@ mutable struct MaxAbsScaler
     file::String
     features::Vector{Symbol}
     feature_idxs::Vector{Int}
+
 end
 
 MaxAbsScaler(file::String, features::Vector{Symbol}; copy = true) =
@@ -35,23 +32,25 @@ function fit(scaler::MaxAbsScaler, reader::BlockReader)
     args = (file, block_size, scaler.feature_idxs)
     
     _partial_res = torcjulia.map(
-        _partial_fit,
+        _partial_fit_maxabs,
         offsets;
         chunksize = 1,
         args = args
     )
     
-    _set_attributes(scaler.scaler, _reduce(_partial_res), features, scaler.feature_idxs)
+    _set_attributes_maxabs(scaler.scaler, _reduce_maxabs(_partial_res), features, scaler.feature_idxs)
+
 end
 
-function _set_attributes(scaler::Py, stats::Tuple{Py, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
+function _set_attributes_maxabs(scaler::Py, stats::Tuple{Py, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
     scaler.max_abs_ = stats[1]; scaler.n_samples_seen_ = stats[2]
     scaler.scale_ = stats[1]
     scaler.n_features_in_ = length(stats[1])
     scaler.feature_names_in_ = features[sortperm(feature_idxs)]
+
 end
 
-function _partial_fit(offset::Int, file::String, block_size::Int, 
+function _partial_fit_maxabs(offset::Int, file::String, block_size::Int, 
                       feat_mapping::Vector{Int})::Tuple{Vector{Float64}, Int}
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     
@@ -60,6 +59,7 @@ function _partial_fit(offset::Int, file::String, block_size::Int,
 
     
     max_abs, n_samples
+
 end
 
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
@@ -75,9 +75,10 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
 
         DataFrame(csvfile)
     end
+
 end
 
-function _reduce(stats::Vector{Tuple{Vector{Float64}, Int}})::Tuple{Py, Int}
+function _reduce_maxabs(stats::AbstractVector{<:Tuple{AbstractVector{<:Number}, Integer}})
     maxabs = stats[1][1]; total_samples = stats[1][2]
 
     @inbounds for i in 2:length(stats)
@@ -87,6 +88,7 @@ function _reduce(stats::Vector{Tuple{Vector{Float64}, Int}})::Tuple{Py, Int}
     end
 
     np.array(maxabs), total_samples
+
 end
 
 function transform(scaler::MaxAbsScaler, X) 
@@ -94,6 +96,7 @@ function transform(scaler::MaxAbsScaler, X)
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
     scaler.scaler.transform(np.array(X))
+    
 end
 
 function print_stats(scaler::MaxAbsScaler)
@@ -107,5 +110,4 @@ end
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_scaler(scaler::MaxAbsScaler)::Py = scaler.scaler
-
-end                                                                      
+                                                                    

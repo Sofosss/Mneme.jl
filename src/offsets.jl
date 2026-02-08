@@ -1,4 +1,4 @@
-module offsets
+
 
 using Serialization
 using CSV
@@ -146,6 +146,4 @@ function inspect_rows(path::String)
         end
         return cnt - 1
     end
-end
-
 end

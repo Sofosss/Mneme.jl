@@ -1,7 +1,3 @@
-module standardscaler
-
-import ..offsets: BlockReader
-
 using CondaPkg; CondaPkg.add("scikit-learn")
 using PythonCall
 
@@ -18,6 +14,7 @@ mutable struct StandardScaler
     file::String
     features::Vector{Symbol}
     feature_idxs::Vector{Int}
+    
 end
 
 StandardScaler(file::String, features::Vector{Symbol}; copy = true, with_mean = true,
@@ -40,22 +37,24 @@ function fit(scaler::StandardScaler, reader::BlockReader)
     args = (file, block_size, scaler.feature_idxs, scaler.params.with_std)
     
     _partial_res = torcjulia.map(
-        _partial_fit,
+        _partial_fit_std,
         offsets;
         chunksize = 1,
         args = args
     )
  
-    _set_attributes(scaler.scaler, _reduce(_partial_res), features, scaler.feature_idxs)
+    _set_attributes_std(scaler.scaler, _reduce_std(_partial_res), features, scaler.feature_idxs)
+
 end
 
-function _set_attributes(scaler::Py, stats::Tuple{Py, Union{Py, Nothing}, Union{Py, Nothing}, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
+function _set_attributes_std(scaler::Py, stats::Tuple{Py, Union{Py, Nothing}, Union{Py, Nothing}, Int}, features::Vector{Symbol}, feature_idxs::Vector{Int})
     scaler.mean_ = stats[1]; scaler.var_ = stats[2]; scaler.scale_ = stats[3]; scaler.n_samples_seen_ = stats[4]
     scaler.n_features_in_ = length(stats[1])
     scaler.feature_names_in_ = features[sortperm(feature_idxs)]
+
 end
 
-function _partial_fit(offset::Int, file::String, block_size::Int,
+function _partial_fit_std(offset::Int, file::String, block_size::Int,
                       feat_mapping::Vector{Int}, with_std::Bool)::Tuple{Vector{Float64}, Union{Vector{Float64}, Nothing}, Int} 
     X = _fetch_chunk(offset, file, block_size, feat_mapping)
     n_samples = nrow(X)
@@ -63,6 +62,19 @@ function _partial_fit(offset::Int, file::String, block_size::Int,
     _var = with_std ? varm.(eachcol(X), _mean; corrected = false) : nothing
 
     _mean, _var, n_samples
+
+end
+
+function _process_chunk(scaler::StandardScaler, X::DataFrame, operator_mapping::AbstractVector{<:Integer})
+
+    X_sel = X[:, operator_mapping]
+
+    n_samples = nrow(X_sel)
+    _mean = mean.(eachcol(X_sel))
+    _var  = scaler.params.with_std ? varm.(eachcol(X_sel), _mean; corrected = false) : nothing
+
+    _mean, _var, n_samples
+
 end
 
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
@@ -78,9 +90,10 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
 
         DataFrame(csvfile)
     end
+
 end
 
-function _reduce(stats::Vector{<:Tuple{Vector{Float64}, Union{Vector{Float64}, Nothing}, Int}})::Tuple{Py, Union{Py, Nothing}, Union{Py, Nothing}, Int}
+function _reduce_std(stats::Vector{<:Tuple{Vector{Float64}, Union{Vector{Float64}, Nothing}, Int}})::Tuple{Py, Union{Py, Nothing}, Union{Py, Nothing}, Int}
     means = stats[1][1]; vars = stats[1][2]; total_samples = stats[1][3]
 
     @inbounds for i in 2:length(stats)
@@ -97,6 +110,7 @@ function _reduce(stats::Vector{<:Tuple{Vector{Float64}, Union{Vector{Float64}, N
     end
 
     means, vars, stds, total_samples
+
 end
 
 function _incr_mean_var(mean_1, var_1, n1, mean_2, var_2, n2)
@@ -114,6 +128,7 @@ function _incr_mean_var(mean_1, var_1, n1, mean_2, var_2, n2)
     end
 
     upd_mean, upd_var
+
 end
 
 function transform(scaler::StandardScaler, X) 
@@ -121,6 +136,7 @@ function transform(scaler::StandardScaler, X)
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
     scaler.scaler.transform(np.array(X))
+
 end
 
 function print_stats(scaler::StandardScaler)
@@ -133,5 +149,3 @@ end
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_scaler(scaler::StandardScaler)::Py = scaler.scaler
-
-end                                                                      
