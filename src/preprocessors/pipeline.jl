@@ -103,7 +103,7 @@ function _disp_ops(operators)
         elseif op isa LabelEncoder
             LabelDisp()
         else
-            error("Operator of type $(typeof(disp)) is not supported.")
+            error("Operator of type $(typeof(disp)) is not supported")
         end
     end, operators)
 
@@ -154,13 +154,11 @@ function _set_attributes(op, stats; features = nothing, feature_idxs = nothing)
     elseif op isa OneHotEncoder
         fitted_stats = _reduce_ohe(stats)
         _set_attributes_ohe(op.encoder, fitted_stats, features)
-    elseif op isa LabelEncoder
+    else
         fitted_stats = _reduce_le(stats)
         _set_attributes_le(op.encoder, fitted_stats)
-    else
-        error("No _set_attributes method for operator $(typeof(op))")
     end
-    
+
 end
 
 print_stats(pipeline::Pipeline) = foreach(op -> (println("Operator: $(typeof(op))"); print_stats(op); println()), pipeline.operators)
