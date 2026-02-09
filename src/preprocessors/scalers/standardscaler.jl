@@ -65,18 +65,6 @@ function _partial_fit_std(offset::Int, file::String, block_size::Int,
 
 end
 
-function _process_chunk(scaler::StandardScaler, X::DataFrame, operator_mapping::AbstractVector{<:Integer})
-
-    X_sel = X[:, operator_mapping]
-
-    n_samples = nrow(X_sel)
-    _mean = mean.(eachcol(X_sel))
-    _var  = scaler.params.with_std ? varm.(eachcol(X_sel), _mean; corrected = false) : nothing
-
-    _mean, _var, n_samples
-
-end
-
 function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
         seek(io, offset)
@@ -135,7 +123,7 @@ function transform(scaler::StandardScaler, X)
     warnings = pyimport("warnings")
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
-    scaler.scaler.transform(np.array(X))
+    scaler.scaler.transform(np.array(X[:, sort(scaler.feature_idxs)]))
 
 end
 

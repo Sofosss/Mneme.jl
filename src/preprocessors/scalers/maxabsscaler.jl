@@ -95,7 +95,7 @@ function transform(scaler::MaxAbsScaler, X)
     warnings = pyimport("warnings")
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
-    scaler.scaler.transform(np.array(X))
+    scaler.scaler.transform(np.array(X[:, sort(scaler.feature_idxs)]))
     
 end
 

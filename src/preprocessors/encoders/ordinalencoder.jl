@@ -144,7 +144,7 @@ function transform(encoder::OrdinalEncoder, X)
     warnings = pyimport("warnings")
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
-    encoder.encoder.transform(np.array(X))
+    encoder.encoder.transform(np.array(X[:, sort(encoder.feature_idxs)]))
 
 end
 

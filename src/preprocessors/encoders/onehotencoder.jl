@@ -153,7 +153,7 @@ function transform(encoder::OneHotEncoder, X)
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
     # if sparse output is true, Y is always a scipy.sparse._csr.csr_matrix (line 1080 -> /preprocessing/_encoders.py)
-    encoder.encoder.transform(np.array(X))
+    encoder.encoder.transform(np.array(X[:, sort(encoder.feature_idxs)]))
 
 end
 

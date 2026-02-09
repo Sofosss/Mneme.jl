@@ -1,3 +1,7 @@
+using PythonCall
+
+np = pyimport("numpy")
+
 using DataFrames, CSV
 
 import ..torcjulia
@@ -14,7 +18,9 @@ Pipeline(operators::Vector{Union{MinMaxScaler, MaxAbsScaler, StandardScaler, Ord
 
 abstract type OpDisp end
 
-struct StandardDisp <: OpDisp end
+struct StandardDisp <: OpDisp
+    with_std::Bool
+end
 struct MaxAbsDisp <: OpDisp end
 struct MinMaxDisp <: OpDisp end
 struct OrdinalDisp <: OpDisp end
@@ -40,6 +46,10 @@ function fit(pipeline::Pipeline, reader::BlockReader)
         ]
         for operator in _act_ops
     ]
+
+    for (i, op) in enumerate(pipeline.operators)
+        op.feature_idxs = _operators_mapping[i]
+    end
     
     file = pipeline.file; _disp = _disp_ops(_act_ops)
     args = (_disp, file, block_size, _feat_mapping, _operators_mapping)
@@ -94,7 +104,7 @@ end
 function _disp_ops(operators)
     map(op -> begin
         if op isa StandardScaler
-            StandardDisp()
+            StandardDisp(op.with_std)
         elseif op isa MaxAbsScaler
             MaxAbsDisp()
         elseif op isa MinMaxScaler
@@ -116,7 +126,7 @@ function _process_chunk(disp::OpDisp, X::DataFrame, feature_idxs)
     if disp isa StandardDisp
         n_samples = nrow(X)
         _mean = mean.(eachcol(X[:, feature_idxs]))
-        _var  = varm.(eachcol(X[:, feature_idxs]), _mean; corrected = false)
+        _var  = disp.with_std ? varm.(eachcol(X[:, feature_idxs]), _mean; corrected = false) : nothing
         return _mean, _var, n_samples
     
     elseif disp isa MaxAbsDisp
@@ -136,7 +146,20 @@ function _process_chunk(disp::OpDisp, X::DataFrame, feature_idxs)
     
     end
 
-    return [unique(X[:, i]) for i in sort(feature_idxs)]
+    [unique(X[:, i]) for i in sort(feature_idxs)]
+
+end
+
+function transform(pipeline::Pipeline, X)
+    X_transformed = np.array(X)
+
+    for op in pipeline.operators
+        _trans_X = transform(op, X)
+        py_target_idxs = np.array([i-1 for i in sort(op.feature_idxs)])
+        X_transformed[pyslice(nothing), py_target_idxs] =  _trans_X
+    end
+    
+    X_transformed
 
 end
 
@@ -180,10 +203,8 @@ function _parse_ops(pipeline, reader)
 
         (!hasfield(typeof(op), :categories) || isa(op.categories, String)) && continue
 
-        enc = op.encoder
-        enc.categories_ = enc.categories
-        enc.n_features_in_ = length(op.categories)
-        enc._infrequent_enabled = false
+        enc = op.encoder; enc.categories_ = enc.categories
+        enc.n_features_in_ = length(op.categories); enc._infrequent_enabled = false
 
         if op isa OrdinalEncoder
             enc.feature_names_in_ = features[sortperm(reader.feature_idxs)]

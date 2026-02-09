@@ -78,7 +78,6 @@ function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::
             select = feat_mapping
         )
         
-        println(DataFrame(csvfile))
         DataFrame(csvfile)
     end
 
@@ -102,7 +101,7 @@ function transform(scaler::MinMaxScaler, X)
     warnings = pyimport("warnings")
     warnings.filterwarnings("ignore", message = "X does not have valid feature names")
 
-    scaler.scaler.transform(np.array(X))
+    scaler.scaler.transform(np.array(X[:, sort(scaler.feature_idxs)]))
     
 end
 
