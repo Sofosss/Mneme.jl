@@ -1,4 +1,4 @@
-1. Pipeline transform function
+1. Pipeline transform function: Done
 2. Support SimpleImputer (also in the Pipeline structure)
-3. Support oe and ohe extra args in the Pipeline structure 
+3. Support oe and ohe extra args in the Pipeline structure: Done
 4. Support RobustScaler
