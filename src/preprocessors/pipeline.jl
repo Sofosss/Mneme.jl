@@ -167,6 +167,17 @@ function _parse_ops(pipeline, reader)
     _act = trues(length(pipeline.operators))
 
     for (i, op) in pairs(pipeline.operators)
+
+        if op isa StandardScaler
+            !(op.params.with_mean || op.params.with_std) && begin
+                op.scaler.mean_ = nothing
+                op.scaler.var_  = nothing
+                op.scaler.scale_ = nothing
+                
+                _act[i] = false; continue
+            end
+        end
+
         (!hasfield(typeof(op), :categories) || isa(op.categories, String)) && continue
 
         enc = op.encoder
