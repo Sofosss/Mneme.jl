@@ -104,7 +104,7 @@ end
 function _disp_ops(operators)
     map(op -> begin
         if op isa StandardScaler
-            StandardDisp(op.with_std)
+            StandardDisp(op.params.with_std)
         elseif op isa MaxAbsScaler
             MaxAbsDisp()
         elseif op isa MinMaxScaler
