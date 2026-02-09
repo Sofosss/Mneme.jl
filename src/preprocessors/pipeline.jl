@@ -24,7 +24,9 @@ struct LabelDisp <: OpDisp end
 function fit(pipeline::Pipeline, reader::BlockReader)
     block_size, offsets = reader.block_size, reader.block_offsets
 
-    _features = _get_union_features(pipeline.operators, reader.columns)
+    _mask = _parse_ops(pipeline, reader); _act_ops = pipeline.operators[_mask]
+
+    _features = _get_union_features(_act_ops, reader.columns)
     _feat_mapping = _map_features(_features, reader.feature_idxs_map)
     _feat_dict = Dict(f => i for (i, f) in pairs(_feat_mapping))
 
@@ -36,10 +38,10 @@ function fit(pipeline::Pipeline, reader::BlockReader)
                 reader.feature_idxs_map
             )
         ]
-        for operator in pipeline.operators
+        for operator in _act_ops
     ]
     
-    file = pipeline.file; _disp = _disp_ops(pipeline.operators)
+    file = pipeline.file; _disp = _disp_ops(_act_ops)
     args = (_disp, file, block_size, _feat_mapping, _operators_mapping)
     
     _partial_res = torcjulia.map(
@@ -57,8 +59,9 @@ function fit(pipeline::Pipeline, reader::BlockReader)
         for op in pipeline.operators
     )
 
-    for (i, op) in enumerate(pipeline.operators)
-        _set_attributes(op, [chunk[i] for chunk in _partial_res];
+    for (j, i) in enumerate(findall(_mask))
+        op = pipeline.operators[i]
+        _set_attributes(op, [chunk[j] for chunk in _partial_res];
                     features = op.features,
                     feature_idxs = feature_idxs_map[op])
     end
@@ -133,8 +136,7 @@ function _process_chunk(disp::OpDisp, X::DataFrame, feature_idxs)
     
     end
 
-    reorder_perm = sortperm(sortperm(feature_idxs))  
-    [unique(X[:, i]) for i in reorder_perm]
+    return [unique(X[:, i]) for i in sort(feature_idxs)]
 
 end
 
@@ -159,6 +161,32 @@ function _set_attributes(op, stats; features = nothing, feature_idxs = nothing)
         _set_attributes_le(op.encoder, fitted_stats)
     end
 
+end
+
+function _parse_ops(pipeline, reader)
+    _act = trues(length(pipeline.operators))
+
+    for (i, op) in pairs(pipeline.operators)
+        (!hasfield(typeof(op), :categories) || isa(op.categories, String)) && continue
+
+        enc = op.encoder
+        enc.categories_ = enc.categories
+        enc.n_features_in_ = length(op.categories)
+        enc._infrequent_enabled = false
+
+        if op isa OrdinalEncoder
+            enc.feature_names_in_ = features[sortperm(reader.feature_idxs)]
+
+        elseif op isa OneHotEncoder
+            enc.feature_names_in_ = op.features
+            enc._missing_indices = Dict{Int, Int}()
+            _set_internal_onehot_state!(enc)
+        end
+
+        _act[i] = false
+    end
+
+    _act
 end
 
 print_stats(pipeline::Pipeline) = foreach(op -> (println("Operator: $(typeof(op))"); print_stats(op); println()), pipeline.operators)
