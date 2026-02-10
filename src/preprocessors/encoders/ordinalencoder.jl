@@ -59,15 +59,18 @@ function fit(encoder::OrdinalEncoder, reader::BlockReader)
         return
     end
 
-    block_size, offsets = reader.block_size, reader.block_offsets
+    offsets = reader.block_offsets
     encoder.feature_idxs = _map_features(encoder.features, reader.feature_idxs_map)
     
     file = encoder.file; features = encoder.features
-    args = (file, block_size, encoder.feature_idxs)
+    args = (file, encoder.feature_idxs)
+
+    offsets_bounds = [(offsets[i], offsets[i+1]) for i in 1:length(offsets)-1]
+    push!(offsets_bounds, (offsets[end], -1))
     
     _partial_res = torcjulia.map(
         _partial_fit_ord,
-        offsets;
+        offsets_bounds;
         chunksize = 1,
         args = args
     )
@@ -97,27 +100,33 @@ function set_missing_indices(categories::Vector{<:Vector})
 
 end
 
-function _partial_fit_ord(offset::Int, file::String, block_size::Int, 
+function _partial_fit_ord(offsets::Tuple{Int, Int}, file::String,
                       feat_mapping::Vector{Int})::Vector{Vector{Union{Missing, Any}}}
-    X = _fetch_chunk(offset, file, block_size, feat_mapping)
-    classes = [unique(col) for col in eachcol(X)]
-    
+    X = _fetch_chunk_ord(offsets, file, feat_mapping)
+    perm = sortperm(feat_mapping)
+    invp = invperm(perm)
+
+    classes = Vector{Vector{eltype(X)}}(undef, length(invp))
+
+    @inbounds for (k, i) in enumerate(invp)
+        classes[k] = unique(@view X[:, i])
+    end
+
     classes
 
 end
 
-function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
+function _fetch_chunk_ord(offsets::Tuple{Int, Int}, file::String, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
-        seek(io, offset)
+        seek(io, offsets[1])
+        buf = offsets[2] === -1 ? read(io) : read(io, offsets[2] - offsets[1])
 
-        csvfile = CSV.File(
-            io;
-            header = false,
-            limit = block_size,
-            select = feat_mapping
+        CSV.read(
+                IOBuffer(buf),
+                DataFrame;
+                header = false,
+                select = feat_mapping,
         )
-
-        DataFrame(csvfile)
     end
 
 end

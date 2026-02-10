@@ -28,7 +28,7 @@ struct OneHotDisp <: OpDisp end
 struct LabelDisp <: OpDisp end
 
 function fit(pipeline::Pipeline, reader::BlockReader)
-    block_size, offsets = reader.block_size, reader.block_offsets
+    offsets = reader.block_offsets
 
     _mask = _parse_ops(pipeline, reader); _act_ops = pipeline.operators[_mask]
 
@@ -52,15 +52,17 @@ function fit(pipeline::Pipeline, reader::BlockReader)
     end
     
     file = pipeline.file; _disp = _disp_ops(_act_ops)
-    args = (_disp, file, block_size, _feat_mapping, _operators_mapping)
+    args = (_disp, file, _feat_mapping, _operators_mapping)
+
+    offset_chunks = [(offsets[i], offsets[i+1]) for i in 1:length(offsets)-1]
     
     _partial_res = torcjulia.map(
         _partial_fit,
-        offsets;
+        offset_chunks,
         chunksize = 1,
         args = args
     )
-
+    
     feature_idxs_map = Dict(
         op => _map_features(
             isa(op.features, AbstractVector) ? op.features : [op.features],
@@ -78,19 +80,25 @@ function fit(pipeline::Pipeline, reader::BlockReader)
    
 end
 
-function _partial_fit(offset::Int, operators_disp::Vector{OpDisp}, file::String, block_size::Int, 
+function _partial_fit(offsets::Tuple{Int, Int}, operators_disp::Vector{OpDisp}, file::String,
                       feat_mapping::Vector{Int}, _operators_mapping::Vector{<:AbstractVector{<:Integer}})
-    chunk = _fetch_chunk(offset, file, block_size, feat_mapping)
+    chunk = _fetch_chunk(offsets, file, feat_mapping)
     
     [_process_chunk(op_disp, chunk, _operators_mapping[i]) for (i, op_disp) in enumerate(operators_disp)]
 
 end
 
-function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
+function _fetch_chunk(offsets::Tuple{Int, Int}, file::String, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
-        seek(io, offset)
-        csvfile = CSV.File(io; header = false, limit = block_size, select = feat_mapping)
-        DataFrame(csvfile)
+        seek(io, offsets[1])
+        buf = offsets[2] === -1 ? read(io) : read(io, offsets[2] - offsets[1])
+
+        CSV.read(
+                IOBuffer(buf),
+                DataFrame;
+                header = false,
+                select = feat_mapping,
+        )
     end
 
 end
@@ -123,31 +131,43 @@ function _disp_ops(operators)
 end
 
 function _process_chunk(disp::OpDisp, X::DataFrame, feature_idxs)
-    if disp isa StandardDisp
-        n_samples = nrow(X)
-        _mean = mean.(eachcol(X[:, feature_idxs]))
-        _var  = disp.with_std ? varm.(eachcol(X[:, feature_idxs]), _mean; corrected = false) : nothing
-        return _mean, _var, n_samples
-    
-    elseif disp isa MaxAbsDisp
-        n_samples = nrow(X)
-        max_abs = [maximum(abs.(col)) for col in eachcol(X[:, feature_idxs])]
-        return max_abs, n_samples
-    
-    elseif disp isa MinMaxDisp
-        n_samples = nrow(X)
-        data_min = minimum.(eachcol(X[:, feature_idxs]))
-        data_max = maximum.(eachcol(X[:, feature_idxs]))   
+    @views cols = eachcol(X)
+    @views selected_cols = cols[feature_idxs]
+    n_samples = nrow(X)
 
-        return data_min, data_max, n_samples
+    if disp isa StandardDisp
+        n = length(selected_cols)
+        means = Vector{Float64}(undef, n)
+        vars  = disp.with_std ? Vector{Float64}(undef, n) : nothing
+
+        @inbounds for i in 1:n
+            μ, v = _mean_var(selected_cols[i])
+            means[i] = μ
+            disp.with_std && (vars[i] = v)
+        end
+        return means, vars, n_samples
+
+    elseif disp isa MaxAbsDisp
+        maxabs_vals = map(maxabs, selected_cols)
+        return maxabs_vals, n_samples
+
+    elseif disp isa MinMaxDisp
+        n = length(selected_cols)
+        mins = Vector{Float64}(undef, n)
+        maxs = Vector{Float64}(undef, n)
+
+        @inbounds for i in 1:n
+            mn, mx = _minmax(selected_cols[i])
+            mins[i] = mn
+            maxs[i] = mx
+        end
+        return mins, maxs, n_samples
 
     elseif disp isa LabelDisp
-        return unique(X[:, feature_idxs[1]])
-    
+        return _unique(selected_cols[1])
     end
 
-    [unique(X[:, i]) for i in sort(feature_idxs)]
-
+    map(_unique, cols[sort(feature_idxs)])
 end
 
 function transform(pipeline::Pipeline, X)
@@ -160,6 +180,43 @@ function transform(pipeline::Pipeline, X)
     end
     
     X_transformed
+
+end
+
+@inline function _mean_var(c)
+    μ = zero(eltype(c))
+    m2 = zero(eltype(c))
+    n = 0
+    @inbounds for x in c
+        n += 1
+        δ = x - μ
+        μ += δ / n
+        m2 += δ * (x - μ)
+    end
+    
+    μ, m2 / n
+
+end
+
+@inline function _minmax(c)
+    mn = typemax(eltype(c))
+    mx = typemin(eltype(c))
+    @inbounds for x in c
+        x < mn && (mn = x)
+        x > mx && (mx = x)
+    end
+    
+    mn, mx
+
+end
+
+function _unique(c)
+    s = Set{eltype(c)}()
+    @inbounds for x in c
+        push!(s, x)
+    end
+    
+    collect(s)
 
 end
 
@@ -219,6 +276,7 @@ function _parse_ops(pipeline, reader)
     end
 
     _act
+
 end
 
 print_stats(pipeline::Pipeline) = foreach(op -> (println("Operator: $(typeof(op))"); print_stats(op); println()), pipeline.operators)

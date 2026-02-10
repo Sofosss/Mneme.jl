@@ -30,15 +30,18 @@ StandardScaler(file::String, features::Vector{Symbol}; copy = true, with_mean = 
 function fit(scaler::StandardScaler, reader::BlockReader)
     (scaler.params.with_mean || scaler.params.with_std) || (scaler.scaler.mean_ = nothing; scaler.scaler.var_ = nothing; scaler.scaler.scale_ = nothing; return) 
 
-    block_size, offsets = reader.block_size, reader.block_offsets
+    offsets = reader.block_offsets
     scaler.feature_idxs = _map_features(scaler.features, reader.feature_idxs_map)
     
     file = scaler.file; features = scaler.features
-    args = (file, block_size, scaler.feature_idxs, scaler.params.with_std)
+    args = (file, scaler.feature_idxs, scaler.params.with_std)
+    
+    offsets_bounds = [(offsets[i], offsets[i+1]) for i in 1:length(offsets)-1]
+    push!(offsets_bounds, (offsets[end], -1))
     
     _partial_res = torcjulia.map(
-        _partial_fit_std,
-        offsets;
+        _partial_fit_std,                                                                                                                               
+        offsets_bounds;
         chunksize = 1,
         args = args
     )
@@ -54,29 +57,38 @@ function _set_attributes_std(scaler::Py, stats::Tuple{Py, Union{Py, Nothing}, Un
 
 end
 
-function _partial_fit_std(offset::Int, file::String, block_size::Int,
+function _partial_fit_std(offsets::Tuple{Int, Int}, file::String,
                       feat_mapping::Vector{Int}, with_std::Bool)::Tuple{Vector{Float64}, Union{Vector{Float64}, Nothing}, Int} 
-    X = _fetch_chunk(offset, file, block_size, feat_mapping)
-    n_samples = nrow(X)
-    _mean = mean.(eachcol(X))
-    _var = with_std ? varm.(eachcol(X), _mean; corrected = false) : nothing
+    X = _fetch_chunk_std(offsets, file, feat_mapping)
+    n_samples = size(X, 1)
 
-    _mean, _var, n_samples
+    _ncols = length(feat_mapping)
+    _mean = Vector{Float64}(undef, _ncols)
+    _var  = with_std ? Vector{Float64}(undef, _ncols) : nothing
 
+    for j in 1:_ncols
+        col = X[:, j]
+        _mean[j] = mean(col)
+        if with_std
+            _var[j] = mean((col .- _mean[j]).^2)
+        end
+    end
+
+    return _mean, _var, n_samples
 end
 
-function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
+function _fetch_chunk_std(offsets::Tuple{Int, Int}, file::String, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
-        seek(io, offset)
+        seek(io, offsets[1])
+        buf = offsets[2] === -1 ? read(io) : read(io, offsets[2] - offsets[1])
 
-        csvfile = CSV.File(
-            io;
-            header = false,
-            limit = block_size,
-            select = feat_mapping
+        CSV.read(
+                IOBuffer(buf),
+                DataFrame;
+                header = false,
+                select = feat_mapping,
+                types = Float64
         )
-
-        DataFrame(csvfile)
     end
 
 end

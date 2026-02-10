@@ -25,15 +25,18 @@ MaxAbsScaler(file::String, features::Vector{Symbol}; copy = true) =
     )
 
 function fit(scaler::MaxAbsScaler, reader::BlockReader)
-    block_size, offsets = reader.block_size, reader.block_offsets
+    offsets = reader.block_offsets
     scaler.feature_idxs = _map_features(scaler.features, reader.feature_idxs_map)
     
     file = scaler.file; features = scaler.features
-    args = (file, block_size, scaler.feature_idxs)
+    args = (file, scaler.feature_idxs)
+
+    offsets_bounds = [(offsets[i], offsets[i+1]) for i in 1:length(offsets)-1]
+    push!(offsets_bounds, (offsets[end], -1))
     
     _partial_res = torcjulia.map(
         _partial_fit_maxabs,
-        offsets;
+        offsets_bounds;
         chunksize = 1,
         args = args
     )
@@ -50,30 +53,41 @@ function _set_attributes_maxabs(scaler::Py, stats::Tuple{Py, Int}, features::Vec
 
 end
 
-function _partial_fit_maxabs(offset::Int, file::String, block_size::Int, 
+function _partial_fit_maxabs(offsets::Tuple{Int, Int}, file::String,
                       feat_mapping::Vector{Int})::Tuple{Vector{Float64}, Int}
-    X = _fetch_chunk(offset, file, block_size, feat_mapping)
-    
-    n_samples = nrow(X)
-    max_abs = [maximum(abs.(col)) for col in eachcol(X)]
+    X = _fetch_chunk_maxabs(offsets, file, feat_mapping)
+    n_samples, n_features = size(X)
 
-    
+    max_abs = zeros(Float64, n_features)
+
+    @inbounds @simd for j in 1:n_features
+        col = view(X, :, j)
+        m = 0.0
+        for i in 1:n_samples
+            v = abs(col[i])
+            if v > m
+                m = v
+            end
+        end
+        max_abs[j] = m
+    end
+
     max_abs, n_samples
 
 end
 
-function _fetch_chunk(offset::Int, file::String, block_size::Int, feat_mapping::Vector{Int})::DataFrame
+function _fetch_chunk_maxabs(offsets::Tuple{Int, Int}, file::String, feat_mapping::Vector{Int})::DataFrame
     open(file, "r") do io
-        seek(io, offset)
+        seek(io, offsets[1])
+        buf = offsets[2] === -1 ? read(io) : read(io, offsets[2] - offsets[1])
 
-        csvfile = CSV.File(
-            io;
-            header = false,
-            limit = block_size,
-            select = feat_mapping
+        CSV.read(
+                IOBuffer(buf),
+                DataFrame;
+                header = false,
+                select = feat_mapping,
+                types = Float64
         )
-
-        DataFrame(csvfile)
     end
 
 end
@@ -110,4 +124,3 @@ end
 _map_features(features::Vector{Symbol}, mapping::Dict{Symbol, Int}) = [mapping[f] for f in features if f in keys(mapping)]
 
 get_scaler(scaler::MaxAbsScaler)::Py = scaler.scaler
-                                                                    
